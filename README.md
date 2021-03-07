@@ -1,7 +1,7 @@
 # crusto
 Cryptography implementations for my study in Rust.
 
-## Feature
+## Features
 - Cryptographically secure pseudo random number generator
     - Random byte generator
     - Random bigint generator

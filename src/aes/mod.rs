@@ -1,5 +1,6 @@
 use std::convert::TryInto;
 
+/// Advanced Encryption Standard
 pub struct AES {
     keylen: KeyLength,
     mode: CipherMode,
@@ -8,6 +9,7 @@ pub struct AES {
     nb: usize,
 }
 
+/// Block cipher modes of operation
 #[derive(Copy,Clone)]
 pub enum CipherMode {
     EBC,
@@ -17,6 +19,7 @@ pub enum CipherMode {
     CTR,
 }
 
+/// Key length
 #[derive(Copy,Clone)]
 pub enum KeyLength {
     KL128 = 128,
@@ -32,36 +35,32 @@ impl AES {
         AES {keylen,mode,nk,nr,nb:4}
     }
 
-    pub fn encrypt(&self, key: &[u8], iv: &[u8], plain: &[u8]) -> Result<Vec<u8>,&'static str> {
+    pub fn encrypt(&self, key: &[u8], iv: &[u8;16], plain: &[u8]) -> Result<Vec<u8>,&'static str> {
         if key.len()!=(self.keylen as usize)/8 {
-            return Err("invalid key length");
+            return Err("Invalid key length");
         }
 
         if iv.len()!=128/8 {
-            return Err("invalid IV length");
+            return Err("Invalid IV length");
+        }
+
+        if plain.len()%16!=0 {
+            return Err("Plain text must be padded in 16-byte units");
         }
 
         if plain.len()==0 {
-            return Err("Empty input");
+            return Err("Empty plain text");
         }
 
-        let mut plain_mut = plain.to_vec();
-
-        // PKCS7
-        let pad_size:u8=(16-plain_mut.len()%16).try_into().unwrap();
-        for _i in 0..pad_size {
-            plain_mut.push(pad_size);
-        }
-        
-        let mut cipher:Vec<u8>=Vec::with_capacity(plain_mut.len()+1);
+        let mut cipher:Vec<u8>=Vec::with_capacity(plain.len()+1);
         let mut plain_block: [u8;16];
         let mut cipher_block: [u8;16]=[0;16];
         let mut block: [u8;16]=[0;16];
-        let mut out_block: [u8;16];
+        let mut out_block: [u8;16]=[0;16];
         let mut nonce: [u8;16]=[0;16];
         
-        for i in 0..plain_mut.len()/16 {
-            plain_block = plain_mut[16*i..16*(i+1)].try_into().unwrap();
+        for i in 0..plain.len()/16 {
+            plain_block = plain[16*i..16*(i+1)].try_into().unwrap();
 
             match self.mode {
                 CipherMode::EBC=>{
@@ -69,47 +68,43 @@ impl AES {
                 },
                 CipherMode::CBC=>{
                     if i==0 {
-                        cipher_block = iv.try_into().unwrap();
-                        cipher.extend_from_slice(&cipher_block);
-
+                        for j in 0..16 {
+                            block[j]=plain_block[j]^iv[j];
+                        }
+                    } else {
                         for j in 0..16 {
                             block[j]=plain_block[j]^cipher_block[j];
                         }
-                    } 
+                    }
                     
                     cipher_block = self.encrypt_block(key,&block);
-                    for j in 0..16 {
-                        block[j]=plain_block[j]^cipher_block[j];
-                    }
                 },
                 CipherMode::CFB=>{
                     if i==0 {
-                        cipher_block=iv.try_into().unwrap();
-                        cipher.extend_from_slice(&cipher_block);
+                        block = self.encrypt_block(key,&iv);
+                    } else {
+                        block = self.encrypt_block(key,&cipher_block);
                     }
-                    block = self.encrypt_block(key,&cipher_block);
+
                     for j in 0..16 {
                         cipher_block[j]=block[j]^plain_block[j];
                     }
                 },
                 CipherMode::OFB=>{
                     if i==0 {
-                        block=iv.try_into().unwrap();
-                        cipher_block=block;
-                        cipher.extend_from_slice(&cipher_block);
+                        block=*iv;
+                    } else {
+                        block = out_block;
                     }
                     out_block = self.encrypt_block(key,&block);
                     
                     for j in 0..16 {
                         cipher_block[j]=plain_block[j]^out_block[j];
                     }
-                    block = out_block;
                 },
                 CipherMode::CTR=>{
                     if i==0 {
-                        nonce=iv.try_into().unwrap();
-                        cipher_block=nonce;
-                        cipher.extend_from_slice(&cipher_block);
+                        nonce=*iv;
                     }
                     block = self.encrypt_block(key,&nonce);
                     for j in 0..16 {
@@ -134,20 +129,24 @@ impl AES {
         Ok(cipher)
     }
 
-    pub fn decrypt(&self, key: &[u8], cipher: &[u8]) -> Result<Vec<u8>,&'static str> {
+    pub fn decrypt(&self, key: &[u8],  iv: &[u8;16], cipher: &[u8]) -> Result<Vec<u8>,&'static str> {
         if key.len()!=(self.keylen as usize)/8 {
-            return Err("invalid key length");
+            return Err("Invalid key length");
+        }
+
+        if iv.len()!=128/8 {
+            return Err("Invalid IV length");
         }
 
         if cipher.len()%16!=0 {
-            return Err("invalid ciphertext length");
+            return Err("Invalid ciphertext length");
         }
         
         let mut plain:Vec<u8>=Vec::with_capacity(cipher.len()+1);
         let mut plain_block: [u8;16]=[0;16];
         let mut cipher_block: [u8;16];
-        let mut block: [u8;16]=[0;16];
-        let mut out_block: [u8;16];
+        let mut block: [u8;16];
+        let mut out_block: [u8;16]=[0;16];
         let mut nonce: [u8;16]=[0;16];
         
         for i in 0..cipher.len()/16 {
@@ -158,58 +157,57 @@ impl AES {
                     plain_block = self.decrypt_block(key,&cipher_block);
                 },
                 CipherMode::CBC=>{
-                    if i==0 {
-                        continue;
-                    }
-
                     block = self.decrypt_block(key,&cipher_block);
-                    for j in 0..16 {
-                        plain_block[j]=block[j]^cipher[16*(i-1)+j];
+
+                    if i==0 {
+                        for j in 0..16 {
+                            plain_block[j]=block[j]^iv[j];
+                        }
+                    } else {
+                        for j in 0..16 {
+                            plain_block[j]=block[j]^cipher_block[j];
+                        }
                     }
                 },
                 CipherMode::CFB=>{
                     if i==0 {
+                        block = self.encrypt_block(key,&iv);
+                    } else {
                         block = self.encrypt_block(key,&cipher_block);
-                        continue;
                     }
-
+                    
                     for j in 0..16 {
                         plain_block[j]=block[j]^cipher_block[j];
                     }
-                    block = self.encrypt_block(key,&cipher_block);
                 },
                 CipherMode::OFB=>{
                     if i==0 {
-                        block=cipher_block;
-                        continue;
-                    }
-                    else {
-                        out_block = self.encrypt_block(key,&block);
-                        
-                        for j in 0..16 {
-                            plain_block[j]=cipher_block[j]^out_block[j];
-                        }
+                        block=*iv;
+                    } else {
                         block = out_block;
+                    }
+                    out_block = self.encrypt_block(key,&block);
+                    
+                    for j in 0..16 {
+                        plain_block[j]=cipher_block[j]^out_block[j];
                     }
                 },
                 CipherMode::CTR=>{
                     if i==0 {
-                        nonce=cipher_block;
-                        continue;
-                    } else {
-                        block = self.encrypt_block(key,&nonce);
-                        for j in 0..16 {
-                            plain_block[j]=block[j]^cipher_block[j];
-                        }
+                        nonce=*iv;
+                    }
+                    block = self.encrypt_block(key,&nonce);
+                    for j in 0..16 {
+                        plain_block[j]=block[j]^cipher_block[j];
+                    }
 
-                        // increment nonce
-                        for i in 0..16 {
-                            if nonce[i]!=0xFF {
-                                nonce[i]+=1;
-                                break;
-                            } else {
-                                nonce[i]=0;
-                            }
+                    // increment nonce
+                    for i in 0..16 {
+                        if nonce[i]!=0xFF {
+                            nonce[i]+=1;
+                            break;
+                        } else {
+                            nonce[i]=0;
                         }
                     }
                 },
@@ -218,16 +216,10 @@ impl AES {
             plain.extend_from_slice(&plain_block);
         }
 
-        // unpad
-        let pad_size=plain.last().unwrap();
-        for _i in 0..*pad_size {
-            plain.pop();
-        }
-
         Ok(plain)
     }
 
-    fn encrypt_block(&self, key: &[u8], input: &[u8;16]) -> [u8;16] {
+    pub fn encrypt_block(&self, key: &[u8], input: &[u8;16]) -> [u8;16] {
         assert!(key.len()==16 || key.len()==24 || key.len()==32, "Invalid key length!");
 
         let mut state: [[u8; 4]; 4] = [[0; 4]; 4];
@@ -271,7 +263,7 @@ impl AES {
         output
     }
 
-    fn decrypt_block(&self, key: &[u8], input: &[u8;16]) -> [u8;16] {
+    pub fn decrypt_block(&self, key: &[u8], input: &[u8;16]) -> [u8;16] {
         assert!(key.len()==16 || key.len()==24 || key.len()==32, "Invalid key length!");
 
         let mut state: [[u8; 4]; 4] = [[0; 4]; 4];
@@ -529,21 +521,15 @@ mod tests {
         let r = Rng::new();
         let bs = r.generate_bytes(16);
 
-        for v in bs.iter() {
-            print!("{:x}",v);
-        }
-        print!("\n");
-
         let aes = AES::new(KeyLength::KL128, CipherMode::CBC);
         let ek = aes.expand_key(&bs[..]);
         let mut es=Vec::new();
         for v in ek.iter() {
             es.append(&mut v.to_le_bytes().to_vec());
         }
-        for v in es.iter() {
-            print!("{:x}",v);
+        for i in 0..bs.len() {
+            assert_eq!(bs[i],es[i]);
         }
-        print!("\n");
     }
 
     #[test]
@@ -594,24 +580,14 @@ mod tests {
     fn aes() {
         let aes = AES::new(KeyLength::KL256, CipherMode::CBC);
         let rnd = super::super::rng::Rng::new();
-        let mut input:Vec<u8> = (0..10).collect();
+        let input:Vec<u8> = (0..16).collect();
         let key=rnd.generate_bytes(256/8);
         let iv=rnd.generate_bytes(16);
-        let mut en = aes.encrypt(&key, &iv, &mut input[..]).unwrap();
-        let de = aes.decrypt(&key,&mut en).unwrap();
+        let en = aes.encrypt(&key, &iv.clone().try_into().unwrap(), &input[..]).unwrap();
+        let de = aes.decrypt(&key, &iv.try_into().unwrap(), &en).unwrap();
 
-        print!("plain:");
-        for v in input.iter() {
-            print!("{:<02x},",v);
+        for i in 0..input.len() {
+            assert_eq!(input[i],de[i]);
         }
-        print!("\nenc  :");
-        for v in en.iter() {
-            print!("{:<02x},",v);
-        }
-        print!("\ndec  :");
-        for v in de.iter() {
-            print!("{:<02x},",v);
-        }
-        print!("\n");
     }
 }
