@@ -1,4 +1,4 @@
-use num_bigint::BigUint;
+use num::BigUint;
 use rand::prelude::*;
 use rand_chacha::ChaChaRng;
 
