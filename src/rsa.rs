@@ -44,6 +44,19 @@ pub fn gen_pubkey(sk: &PrivateKey) -> PublicKey {
     PublicKey{n:sk.p.clone()*sk.q.clone(),e}
 }
 
+pub fn encrypt(data: &[u8], pk: &PublicKey) -> Vec<u8> {
+    let m = BigUint::from_bytes_le(data);
+    let c = m.modpow(&pk.e, &pk.n);
+    c.to_bytes_le()
+}
+
+pub fn decrypt(data: &[u8], sk: &PrivateKey) -> Vec<u8> {
+    let c = BigUint::from_bytes_le(data);
+    let n = sk.p.clone()*sk.q.clone();
+    let m = c.modpow(&sk.d, &n);
+    m.to_bytes_le()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -61,5 +74,36 @@ mod tests {
         let pk2 = gen_pubkey(&sk);
         assert_eq!(pk.e,pk2.e);
         assert_eq!(pk.n,pk2.n);
+    }
+
+    #[test]
+    fn test_encrypt_decrypt() {
+        use crate::rng::Rng;
+
+        let (pk,sk) = gen_key();
+        let mut rng = Rng::new();
+        let data = rng.generate_bytes(16);
+        let c = encrypt(&data, &pk);
+        let m = decrypt(&c, &sk);
+
+        print!("data: ");
+        for v in data.iter() {
+            print!("{:<0x}",v);
+        }
+        print!("\n");
+
+        print!("c: ");
+        for v in c.iter() {
+            print!("{:<0x}",v);
+        }
+        print!("\n");
+
+        print!("m: ");
+        for v in m.iter() {
+            print!("{:<0x}",v);
+        }
+        print!("\n");
+
+        assert_eq!(data,m);
     }
 }
