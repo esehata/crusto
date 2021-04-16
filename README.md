@@ -8,3 +8,7 @@ Cryptography implementations for my study in Rust.
 - AES
     - Block cipher mode of operation(ECB,CBC,CFB,OFB,CTR)
     - Padding (PKCS #7)
+- Number theory
+    - Probablistic prime number generator
+- RSA
+    - Keygen/Encryption/Decription
